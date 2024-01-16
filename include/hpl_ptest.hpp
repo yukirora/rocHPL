@@ -109,7 +109,7 @@ void HPL_pdinfo(int    ARGC,
                 double*);
 
 void HPL_pdtest(HPL_T_test*, HPL_T_grid*, HPL_T_palg*, const int, const int);
-void HPL_InitGPU(const HPL_T_grid* GRID);
+void HPL_InitGPU(HPL_T_grid* GRID);
 void HPL_FreeGPU();
 
 #endif

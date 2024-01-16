@@ -20,12 +20,22 @@ hipEvent_t dgemmStart[HPL_N_UPD], dgemmStop[HPL_N_UPD];
 
 static char host_name[MPI_MAX_PROCESSOR_NAME];
 
+#include <rccl/rccl.h>
+#ifndef CHECK_NCCL_ERROR
+#define CHECK_NCCL_ERROR(error)                                                                                        \
+    if (error != ncclSuccess) {                                                                                        \
+        fprintf(stderr, "NCCL error(Err=%d) at %s:%d\n", error, __FILE__, __LINE__);                                   \
+        fprintf(stderr, "\n");                                                                                         \
+        exit(-1);                                                                                                      \
+    }
+#endif
+
 /*
   This function finds out how many MPI processes are running on the same node
   and assigns a local rank that can be used to map a process to a device.
   This function needs to be called by all the MPI processes.
 */
-void HPL_InitGPU(const HPL_T_grid* GRID) {
+void HPL_InitGPU( HPL_T_grid* GRID) {
   char host_name[MPI_MAX_PROCESSOR_NAME];
 
   int i, n, namelen, rank, nprocs;
@@ -95,6 +105,26 @@ void HPL_InitGPU(const HPL_T_grid* GRID) {
   CHECK_HIP_ERROR(hipEventCreate(dgemmStop + HPL_LOOK_AHEAD));
   CHECK_HIP_ERROR(hipEventCreate(dgemmStop + HPL_UPD_1));
   CHECK_HIP_ERROR(hipEventCreate(dgemmStop + HPL_UPD_2));
+
+  // Init NCCL
+  ncclUniqueId nccl_rid, nccl_cid;
+  int comm_rank, comm_size;
+  MPI_Comm_rank(GRID->row_comm, &comm_rank);
+  MPI_Comm_size(GRID->row_comm, &comm_size);
+  if (comm_rank == 0) {
+      CHECK_NCCL_ERROR(ncclGetUniqueId(&nccl_rid));
+  }
+  MPI_Bcast(&nccl_rid, sizeof(ncclUniqueId), MPI_BYTE, 0, GRID->row_comm);
+  CHECK_NCCL_ERROR(ncclCommInitRank(&GRID->nccl_rcomm, comm_size, nccl_rid, comm_rank));
+
+  MPI_Comm_rank(GRID->col_comm, &comm_rank);
+  MPI_Comm_size(GRID->col_comm, &comm_size);
+  if (comm_rank == 0) {
+      CHECK_NCCL_ERROR(ncclGetUniqueId(&nccl_cid));
+  }
+  MPI_Bcast(&nccl_cid, sizeof(ncclUniqueId), MPI_BYTE, 0, GRID->col_comm);
+  CHECK_NCCL_ERROR(ncclCommInitRank(&GRID->nccl_ccomm, comm_size, nccl_cid, comm_rank));
+
 }
 
 void HPL_FreeGPU() {

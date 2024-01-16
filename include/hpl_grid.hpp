@@ -21,6 +21,7 @@
  * ---------------------------------------------------------------------
  */
 #include "hpl_pmisc.hpp"
+#include <rccl/rccl.h>
 
 /*
  * ---------------------------------------------------------------------
@@ -35,6 +36,8 @@ typedef struct HPL_S_grid {
   MPI_Comm    all_comm;    /* grid communicator */
   MPI_Comm    row_comm;    /* row communicator */
   MPI_Comm    col_comm;    /* column communicator */
+  ncclComm_t nccl_rcomm;
+  ncclComm_t nccl_ccomm;
   HPL_T_ORDER order;       /* ordering of the procs in the grid */
   int         iam;         /* my rank in the grid */
   int         myrow;       /* my row number in the grid */

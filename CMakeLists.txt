@@ -124,7 +124,7 @@ endforeach()
 hip_add_executable(rochpl ${rochpl_source} ${rochpl_device_source})
 
 target_compile_options(rochpl PRIVATE ${CMAKE_HOST_FLAGS})
-
+find_package(rccl REQUIRED)
 if(HPL_DEBUG)
   target_compile_definitions(rochpl PRIVATE HPL_DEBUG)
 endif()
@@ -164,7 +164,7 @@ target_link_libraries(rochpl PRIVATE BLAS::BLAS)
 target_link_libraries(rochpl PRIVATE roc::rocblas)
 target_link_libraries(rochpl PRIVATE roc::roctracer)
 target_link_libraries(rochpl PRIVATE roc::roctx)
-
+target_link_libraries(rochpl PRIVATE rccl) 
 # Target properties
 set_target_properties(rochpl PROPERTIES VERSION ${rochpl_VERSION})
 set_target_properties(rochpl PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

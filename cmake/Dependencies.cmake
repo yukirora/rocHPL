@@ -88,7 +88,7 @@ find_library(ROCTRACER NAMES roctracer64
 find_library(ROCTX NAMES roctx64
              PATHS ${ROCM_PATH}/lib
              NO_DEFAULT_PATH)
-
+find_package(rccl REQUIRED)
 message("-- roctracer:  ${ROCTRACER}")
 message("-- roctx:      ${ROCTX}")
 

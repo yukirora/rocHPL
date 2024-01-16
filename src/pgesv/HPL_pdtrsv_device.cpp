@@ -16,6 +16,7 @@
 
 #include "hpl.hpp"
 #include <hip/hip_runtime.h>
+#include <rccl/rccl.h>
 
 #define BLOCK_SIZE 512
 __global__ void setZero(const int N, double* __restrict__ X) {
@@ -77,6 +78,7 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
   int Alcol, Alrow, Anpprev, Anp, Anq, Bcol, Cmsgid, GridIsNotPx1, GridIsNot1xQ,
       Rmsgid, colprev, kb, kbprev, lda, mycol, myrow, n, n1, n1p,
       n1pprev = 0, nb, npcol, nprow, rowprev, tmp1, tmp2;
+
 /* ..
  * .. Executable Statements ..
  */
@@ -132,9 +134,9 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
         CHECK_HIP_ERROR(hipMemcpyAsync(
             dXC, dB, Anp * sizeof(double), hipMemcpyDeviceToDevice, stream));
         CHECK_HIP_ERROR(hipStreamSynchronize(stream));
-        (void)HPL_send(dXC, Anp, Alcol, Rmsgid, Rcomm);
+        (void)ncclSend(dXC, Anp,ncclDouble, Alcol, GRID->nccl_rcomm, stream);
       } else if(mycol == Alcol) {
-        (void)HPL_recv(dXC, Anp, Bcol, Rmsgid, Rcomm);
+        (void)ncclRecv(dXC, Anp,ncclDouble, Bcol,  GRID->nccl_rcomm, stream);
       }
     } else {
       if(mycol == Bcol) {
@@ -157,7 +159,7 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
    */
   n1 = (npcol - 1) * nb;
   n1 = Mmax(n1, nb);
-
+  
   Anpprev = Anp;
   dAprev = dAptr = Mptr(dAptr, 0, Anq, lda);
   Xdprev         = XR;
@@ -219,14 +221,15 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
         if(GridIsNot1xQ) {
           if(kbprev) {
             CHECK_HIP_ERROR(hipDeviceSynchronize());
-            (void)HPL_send(
-                dXdprev, kbprev, MModSub1(myrow, nprow), Cmsgid, Ccomm);
+            (void)ncclSend(
+                dXdprev, kbprev, ncclDouble, MModSub1(myrow, nprow),  GRID->nccl_ccomm, stream);
+                
           }
         }
       } else {
         if(kbprev) {
-          (void)HPL_recv(
-              dXdprev, kbprev, MModAdd1(myrow, nprow), Cmsgid, Ccomm);
+          (void)ncclRecv(
+              dXdprev, kbprev,ncclDouble, MModAdd1(myrow, nprow),  GRID->nccl_ccomm, stream);
         }
       }
       /*
@@ -252,7 +255,8 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
         if(GridIsNotPx1) {
           if(n1pprev) {
             CHECK_HIP_ERROR(hipDeviceSynchronize());
-            (void)HPL_send(dXC + tmp1, n1pprev, Alcol, Rmsgid, Rcomm);
+            (void)ncclSend(dXC + tmp1, n1pprev,ncclDouble, Alcol, GRID->nccl_rcomm, stream);
+            
           }
         }
       }
@@ -263,8 +267,8 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
       if((myrow != rowprev) && (myrow != MModAdd1(rowprev, nprow))) {
         if(kbprev) {
           CHECK_HIP_ERROR(hipDeviceSynchronize());
-          (void)HPL_send(
-              dXdprev, kbprev, MModSub1(myrow, nprow), Cmsgid, Ccomm);
+          (void)ncclSend(
+              dXdprev, kbprev,ncclDouble, MModSub1(myrow, nprow), GRID->nccl_ccomm, stream);
         }
       }
     } else if(mycol == Alcol) {
@@ -274,7 +278,7 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
        */
       if(n1pprev > 0) {
         if(n1pprev) {
-          (void)HPL_recv(dW, n1pprev, colprev, Rmsgid, Rcomm);
+          (void)ncclRecv(dW, n1pprev, ncclDouble, colprev,  GRID->nccl_rcomm, stream);
           const double one = 1.0;
           CHECK_ROCBLAS_ERROR(rocblas_daxpy(
               handle, n1pprev, &one, dW, 1, dXC + Anpprev - n1pprev, 1));
@@ -294,8 +298,10 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
                                         lda,
                                         dXC + Anp,
                                         1));
+
       CHECK_ROCBLAS_ERROR(
           rocblas_dcopy(handle, kb, dXC + Anp, 1, dXR + Anq, 1));
+
     }
     /*
      *  Finish previous update
@@ -303,6 +309,7 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
     if((mycol == colprev) && ((tmp1 = Anpprev - n1pprev) > 0)) {
       const double one  = 1.0;
       const double mone = -1.0;
+
       CHECK_ROCBLAS_ERROR(rocblas_dgemv(handle,
                                         rocblas_operation_none,
                                         tmp1,
@@ -315,6 +322,7 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
                                         &one,
                                         dXC,
                                         1));
+
     }
     /*
      *  Save info of current step and update info for the next step
