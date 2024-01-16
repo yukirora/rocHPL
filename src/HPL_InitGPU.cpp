@@ -13,7 +13,7 @@
 
 rocblas_handle handle;
 
-hipStream_t computeStream, dataStream;
+hipStream_t computeStream, dataStream, stream_nccl_send1, stream_nccl_send2;
 
 hipEvent_t swapStartEvent[HPL_N_UPD], update[HPL_N_UPD];
 hipEvent_t dgemmStart[HPL_N_UPD], dgemmStop[HPL_N_UPD];
@@ -89,6 +89,8 @@ void HPL_InitGPU( HPL_T_grid* GRID) {
 
   CHECK_HIP_ERROR(hipStreamCreate(&computeStream));
   CHECK_HIP_ERROR(hipStreamCreate(&dataStream));
+  CHECK_HIP_ERROR(hipStreamCreate(&stream_nccl_send1));
+  CHECK_HIP_ERROR(hipStreamCreate(&stream_nccl_send2));
 
   CHECK_HIP_ERROR(hipEventCreate(swapStartEvent + HPL_LOOK_AHEAD));
   CHECK_HIP_ERROR(hipEventCreate(swapStartEvent + HPL_UPD_1));
@@ -146,4 +148,7 @@ void HPL_FreeGPU() {
 
   CHECK_HIP_ERROR(hipStreamDestroy(dataStream));
   CHECK_HIP_ERROR(hipStreamDestroy(computeStream));
+  CHECK_HIP_ERROR(hipStreamDestroy(stream_nccl_send1));
+  CHECK_HIP_ERROR(hipStreamDestroy(stream_nccl_send2));
 }
+

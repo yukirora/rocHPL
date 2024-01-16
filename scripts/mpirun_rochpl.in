@@ -204,4 +204,4 @@ else
 fi
 
 #run
-${mpi_bin} -np ${np} ${mpi_args} ${rochpl_runscript} ${rochpl_args}
+${mpi_bin} --allow-run-as-root  -np ${np} ${mpi_args} ${rochpl_runscript} ${rochpl_args}

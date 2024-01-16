@@ -27,6 +27,17 @@ __global__ void setZero(const int N, double* __restrict__ X) {
   if(id < N) { X[id] = 0.0; }
 }
 
+#ifndef CHECK_NCCL_ERROR
+#define CHECK_NCCL_ERROR(error)                                                                                        \
+    if (error != ncclSuccess) {                                                                                        \
+        fprintf(stderr, "NCCL error(Err=%d) at %s:%d\n", error, __FILE__, __LINE__);                                   \
+        fprintf(stderr, "\n");                                                                                         \
+        exit(-1);                                                                                                      \
+    }
+#endif
+extern hipStream_t    stream_nccl_send1;
+extern hipStream_t    stream_nccl_send2;
+
 void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
   /*
    * Purpose
@@ -127,17 +138,19 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
   double* dB = Mptr(dAptr, 0, Anq, lda);
 
   Mindxg2p(n, nb, nb, Bcol, 0, npcol);
-
+  
   if(Anp > 0) {
     if(Alcol != Bcol) {
       if(mycol == Bcol) {
         CHECK_HIP_ERROR(hipMemcpyAsync(
             dXC, dB, Anp * sizeof(double), hipMemcpyDeviceToDevice, stream));
-        CHECK_HIP_ERROR(hipStreamSynchronize(stream));
-        (void)ncclSend(dXC, Anp,ncclDouble, Alcol, GRID->nccl_rcomm, stream);
+        //CHECK_HIP_ERROR(hipStreamSynchronize(stream));
+        CHECK_HIP_ERROR(hipDeviceSynchronize());
+        CHECK_NCCL_ERROR(ncclSend(dXC, Anp,ncclDouble, Alcol, GRID->nccl_rcomm, stream_nccl_send1));
       } else if(mycol == Alcol) {
-        (void)ncclRecv(dXC, Anp,ncclDouble, Bcol,  GRID->nccl_rcomm, stream);
+        CHECK_NCCL_ERROR(ncclRecv(dXC, Anp,ncclDouble, Bcol,  GRID->nccl_rcomm, stream_nccl_send1));
       }
+      CHECK_HIP_ERROR(hipStreamSynchronize(stream_nccl_send1));
     } else {
       if(mycol == Bcol) {
         CHECK_HIP_ERROR(hipMemcpyAsync(
@@ -200,6 +213,8 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
   /*
    * Start the operations
    */
+
+  
   while(n > 0) {
     if(mycol == Alcol) {
       dAptr -= lda * kb;
@@ -221,17 +236,19 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
         if(GridIsNot1xQ) {
           if(kbprev) {
             CHECK_HIP_ERROR(hipDeviceSynchronize());
-            (void)ncclSend(
-                dXdprev, kbprev, ncclDouble, MModSub1(myrow, nprow),  GRID->nccl_ccomm, stream);
+
+            CHECK_NCCL_ERROR(ncclSend(
+                dXdprev, kbprev, ncclDouble, MModSub1(myrow, nprow),  GRID->nccl_ccomm, stream_nccl_send2));
                 
           }
         }
       } else {
         if(kbprev) {
-          (void)ncclRecv(
-              dXdprev, kbprev,ncclDouble, MModAdd1(myrow, nprow),  GRID->nccl_ccomm, stream);
+          CHECK_NCCL_ERROR(ncclRecv(
+              dXdprev, kbprev,ncclDouble, MModAdd1(myrow, nprow),  GRID->nccl_ccomm, stream_nccl_send2));
         }
       }
+      CHECK_HIP_ERROR(hipStreamSynchronize(stream_nccl_send2));
       /*
        * Compute partial update of previous solution block and send it to cur-
        * rent column
@@ -255,7 +272,7 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
         if(GridIsNotPx1) {
           if(n1pprev) {
             CHECK_HIP_ERROR(hipDeviceSynchronize());
-            (void)ncclSend(dXC + tmp1, n1pprev,ncclDouble, Alcol, GRID->nccl_rcomm, stream);
+            (void)ncclSend(dXC + tmp1, n1pprev,ncclDouble, Alcol, GRID->nccl_rcomm, stream_nccl_send1);
             
           }
         }
@@ -268,9 +285,11 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
         if(kbprev) {
           CHECK_HIP_ERROR(hipDeviceSynchronize());
           (void)ncclSend(
-              dXdprev, kbprev,ncclDouble, MModSub1(myrow, nprow), GRID->nccl_ccomm, stream);
+              dXdprev, kbprev,ncclDouble, MModSub1(myrow, nprow), GRID->nccl_ccomm, stream_nccl_send2);
+ 
         }
       }
+      
     } else if(mycol == Alcol) {
       /*
        * Current  column  receives  and accumulates partial update of previous
@@ -278,13 +297,21 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
        */
       if(n1pprev > 0) {
         if(n1pprev) {
-          (void)ncclRecv(dW, n1pprev, ncclDouble, colprev,  GRID->nccl_rcomm, stream);
+          (void)ncclRecv(dW, n1pprev, ncclDouble, colprev,  GRID->nccl_rcomm, stream_nccl_send1);
+          CHECK_HIP_ERROR(hipStreamSynchronize(stream_nccl_send1));
           const double one = 1.0;
           CHECK_ROCBLAS_ERROR(rocblas_daxpy(
               handle, n1pprev, &one, dW, 1, dXC + Anpprev - n1pprev, 1));
         }
       }
     }
+
+    CHECK_HIP_ERROR(hipStreamSynchronize(stream_nccl_send1));
+   
+
+
+
+
     /*
      * Solve current diagonal block
      */
@@ -349,6 +376,7 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
     Cmsgid =
         (Cmsgid + 2 > MSGID_END_PTRSV ? MSGID_BEGIN_PTRSV + 1 : Cmsgid + 2);
   }
+  
   /*
    * Replicate last solution block
    */
@@ -363,3 +391,4 @@ void HPL_pdtrsv(HPL_T_grid* GRID, HPL_T_pmat* AMAT) {
   HPL_ptimer(HPL_TIMING_PTRSV);
 #endif
 }
+
